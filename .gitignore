@@ -1,0 +1,34 @@
+# ─── Secrets / local environment ─────────────────────────────────────
+# Credentials (PG DSNs with embedded passwords) live in .env.local on the
+# operator's machine; in production k8s injects them via Secret. The scripts
+# read everything from the environment -- nothing here belongs in git.
+.env
+.env.*
+!.env.example
+*creds*.txt
+.harbor-creds
+.harbor-robot-*
+kubeconfig*
+*.pem
+*.key
+
+# ─── Runtime state / local artifacts ─────────────────────────────────
+# Crawl checkpoints, logs and scratch state are per-machine.
+.state/
+logs/
+*.log
+output/
+tmp/
+.cache/
+
+# ─── Python ──────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# ─── macOS / editors ─────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/

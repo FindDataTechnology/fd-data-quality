@@ -1,0 +1,17 @@
+source: cnstats
+db_env: FD_CNSTATS_PG_URL
+object: cnstats.nbs_observation
+report_only: false
+expected_source: NBS easyquery 滚动/全量入库（scripts/backfill_nbs.py；须国内出口）
+checks:
+  - kind: row_count
+    table: nbs_observation
+    min_rows: 1
+    severity: critical
+    note: 统计局数据尚未入库（2026-09-21 实测：nbs_* 表在全库零命中）
+  - kind: missing_entity
+    table: nbs_observation
+    entity_col: dbcode
+    expected: [hgyd, hgjd, hgnd, fsyd, fsjd, fsnd, csyd, csjd, csnd]
+    severity: warn
+    note: NBS 九库覆盖（hgyd 月度/hgjd 季度/hgnd 年度/fs* 分省/cs* 分城市；当前仅少量库入库）

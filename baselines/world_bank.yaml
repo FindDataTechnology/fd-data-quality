@@ -1,0 +1,24 @@
+source: world_bank
+db_env: FD_WB_PG_URL
+object: world_bank
+report_only: false
+expected_source: wbgapi 全量/滚动重拉（scripts/backfill_wb.py）
+checks:
+  - kind: staleness
+    table: observation
+    key_cols: [indicator_code]
+    period_col: year
+    expected_max: auto            # 以全库最大年为基准
+    allow_lag: 2                  # 允许落后全球最新年 2 年
+    critical_mult: 3              # 落后 > 6 年记 critical
+    note: 指标停更（新年度未拉取或上游停止发布）
+  - kind: missing_rows
+    table: observation
+    entity_col: country_code
+    period_col: year
+    min_ratio: 0.85               # 单年国家数 < 历史最大 85% 记为缺口
+    note: 年度国家覆盖不足
+  - kind: row_count
+    table: indicator
+    min_rows: 1400
+    note: 指标维度行数异常

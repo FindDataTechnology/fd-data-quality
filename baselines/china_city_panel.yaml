@@ -1,0 +1,26 @@
+source: china_city_panel
+db_env: FD_CITY_PG_URL
+object: china_city_panel.panel_raw
+report_only: true               # 插补/重灌脚本不在仓库，本轮只报告
+expected_source: 年鉴/城市统计资料重灌 + 插补脚本（契约见 CONTRACTS.md）
+checks:
+  - kind: staleness
+    table: panel_raw
+    key_cols: []
+    period_col: year
+    expected_max: auto
+    allow_lag: 1
+    critical_mult: 2
+    note: 面板年度停更
+  - kind: missing_cells
+    table: panel_raw
+    value_cols: all
+    exclude_cols: [year, city_code]
+    min_coverage: 0.8
+    note: 城市变量低填充（整列空记 critical）
+  - kind: missing_rows
+    table: panel_raw
+    entity_col: city_code
+    period_col: year
+    min_ratio: 1.0                # 期望 297 城 × 25 年完整网格
+    note: 单年城市数不足（按历史最大城市数）

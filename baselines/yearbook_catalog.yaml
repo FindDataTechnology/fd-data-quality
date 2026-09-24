@@ -1,0 +1,24 @@
+source: yearbook_catalog
+db_env: FD_YEARBOOK_PG_URL
+object: yearbook_catalog.indicator_values
+report_only: true               # 年鉴解析器不在仓库，本轮只报告
+expected_source: 年鉴源文件重解析/重灌（契约见 CONTRACTS.md）
+checks:
+  - kind: data_quality
+    table: indicator_values
+    predicate: "edition_year < 1980 OR edition_year > 2026"
+    severity: critical
+    note: edition_year 越界（已知解析脏值，2,100 组约 370 万行）
+  - kind: volume
+    table: indicator_values
+    period_col: edition_year
+    period_range: [1980, 2026]
+    min_ratio: 0.4                # 单版值数 < 中位版 40% 记缺口（2021 版仅 11.6 万）
+    note: 年鉴版本体量异常（缺版/半版）
+  - kind: staleness
+    table: indicator_values
+    period_col: edition_year
+    expected_max: auto
+    allow_lag: 1
+    critical_mult: 2
+    note: 年鉴最新版本滞后

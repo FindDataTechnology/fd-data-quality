@@ -1,0 +1,32 @@
+source: gta_panel
+db_env: FD_GTA_PG_URL
+object: gta_panel.panel_c0+c1+c2
+report_only: true               # loader 不在仓库（国泰安 dta 离线导入），本轮只报告
+expected_source: 国泰安 dta 文件重灌（契约见 CONTRACTS.md）
+checks:
+  - kind: staleness
+    table: panel_c0
+    key_cols: []
+    period_col: year
+    expected_max: auto
+    allow_lag: 1
+    critical_mult: 2
+    note: 面板年度停更
+  - kind: missing_cells
+    table: panel_c0
+    value_cols: all
+    exclude_cols: [id, id_org, year, stknme]
+    min_coverage: 0.9
+    note: 财务变量低填充（panel_c0 组）
+  - kind: missing_cells
+    table: panel_c1
+    value_cols: all
+    exclude_cols: [id, year]
+    min_coverage: 0.9
+    note: 财务变量低填充（panel_c1 组）
+  - kind: missing_cells
+    table: panel_c2
+    value_cols: all
+    exclude_cols: [id, year]
+    min_coverage: 0.9
+    note: 财务变量低填充（panel_c2 组）
