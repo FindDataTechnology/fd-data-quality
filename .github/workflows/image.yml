@@ -1,0 +1,68 @@
+# Container image publish — GitHub Actions → Tencent TCR 个人版。
+# 标准通道 per openspec retire-jenkins-harbor §3（2026-10-09 用户裁决：构建一律
+# 走 GHA+TCR；Jenkins/Harbor 退役）。Jenkins 在建通道随 §5 摘 webhook 消亡。
+#
+# fd-data-quality 主镜像（Dockerfile：python:3.12-slim，NBS 巡检/补齐工具，
+# Tencent worker 机以 FD_NBS_PULL_IMAGE=1 从 ccr 拉取替代本地 build）：
+#   hkccr.ccs.tencentyun.com/lawcraw-business/fd-data-quality
+# tag = sha-${GITHUB_SHA::7}（不可变，部署引用）+ 滚动 master（本仓主干为
+# master 分支）。runner 推 hkccr（港，跨洋快）→ cheap-3 tcr-relay 回灌 ccr
+# （前置：/etc/tcr-relay/repos.conf 登记 lawcraw-business/fd-data-quality）。
+#
+# 本仓 gitee 私有、org GHA 被 billing 挡：经 scs001 个人镜像仓（免费
+# minutes）触发构建，形态同 scs001/fd-wire（私有镜像仓，2026-10-09 实证）。
+#
+# Secrets（per-repo）：TCR_USERNAME / TCR_PASSWORD
+name: image
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: hkccr.ccs.tencentyun.com
+  NAMESPACE: lawcraw-business
+  IMAGE_NAME: fd-data-quality
+  DOCKERFILE: Dockerfile
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.TCR_USERNAME }}
+          password: ${{ secrets.TCR_PASSWORD }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=master
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ env.DOCKERFILE }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
