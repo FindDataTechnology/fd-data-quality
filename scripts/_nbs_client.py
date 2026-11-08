@@ -170,8 +170,10 @@ class _ForwarderClient:
     response before returning the outcome to the forwarder.
     """
 
-    def __init__(self, timeout: float = 3.0) -> None:
+    def __init__(self, timeout: float = 3.0,
+                 logger: Optional[Callable[[str], None]] = None) -> None:
         self.timeout = timeout
+        self.log = logger or (lambda _msg: None)
 
     @property
     def base_url(self) -> str:
@@ -187,14 +189,28 @@ class _ForwarderClient:
         body = json.dumps(payload).encode("utf-8")
         # This control call intentionally bypasses HTTP_PROXY/HTTPS_PROXY: the
         # forwarder is the control-plane endpoint, not an upstream data proxy.
+        headers = {"Content-Type": "application/json"}
+        # /acquire and /release require the control plane's shared token. Missing
+        # it makes every call be refused, and the crawl keeps working without
+        # rotation — so the refusal must be reported, not swallowed.
+        token = os.environ.get("PROXY_CONTROL_TOKEN")
+        if token:
+            headers["X-Management-Token"] = token
         try:
             with requests.Session() as session:
                 session.trust_env = False
                 resp = session.post(
                     f"{self.base_url}{path}", data=body,
-                    headers={"Content-Type": "application/json"},
+                    headers=headers,
                     timeout=self.timeout,
                 )
+                if resp.status_code in (401, 403, 503):
+                    self.log(
+                        f"proxy forwarder {path} refused ({resp.status_code}) — "
+                        "check PROXY_CONTROL_TOKEN against its MANAGEMENT_TOKEN; "
+                        "egressing direct"
+                    )
+                    return None
                 resp.raise_for_status()
                 return resp.json()
         except (requests.RequestException, ValueError):
@@ -639,7 +655,7 @@ class _BaseClient:
         self._last_request_at: Optional[float] = None
         self.request_count = 0
         self.error_count = 0
-        self.forwarder = _ForwarderClient(timeout=min(3.0, timeout))
+        self.forwarder = _ForwarderClient(timeout=min(3.0, timeout), logger=self.log)
         self.fetch_log_writer = _FetchLogWriter(logger=self.log)
         if self.forwarder.enabled:
             # The forwarder owns the shared Redis QPS gate. A second local delay
