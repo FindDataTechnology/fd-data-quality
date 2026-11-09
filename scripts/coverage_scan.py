@@ -7,6 +7,10 @@
     python3 scripts/coverage_scan.py --source all --run-key 2026-09-21
 
 退出码: 0 = 扫描完成（有缺口也算成功）；非零 = 扫描本身失败（不破坏上一轮报告）。
+
+check kind：staleness（组间停更） / freshness（整源停更，水位对 wall clock） /
+missing_cells / missing_rows / missing_entity / volume / row_count（可选 sum_col 按列
+求行数规模） / data_quality。全部接受可选 ``where`` 行级过滤（共享表按源巡检）。
 """
 import argparse
 import datetime as dt
@@ -31,6 +35,95 @@ SEV_ORDER = {"info": 0, "warn": 1, "critical": 2}
 # ---------------------------------------------------------------- 工具
 
 
+def where_sql(check) -> str:
+    """可选的行级过滤（基线人工声明，与 data_quality.predicate 同一信任级）。
+
+    共享表按源巡检需要它：证券业的财务/指标/六爬虫单元都落在
+    semantic_observations，只能用 source_used / concept_id 区分。
+    """
+    cond = (check.get("where") or "").strip()
+    return f" WHERE ({cond})" if cond else ""
+
+
+def period_agg(check) -> str:
+    """staleness 的期间聚合表达式。period_type=date 时把 varchar 日期归一为 date。"""
+    period = check["period_col"]
+    if check.get("period_type") == "date":
+        return f"max({period}::date)"
+    return f"max({period})"
+
+
+def lag_of(expected, mx):
+    """lag 单位：数值型为原值差；date/timestamp 型为天数（日历日）。"""
+    if isinstance(expected, dt.date) or isinstance(expected, dt.datetime):
+        return (expected - mx).days
+    return expected - mx
+
+
+def as_of_moment(check):
+    """新鲜度判定的参照时刻：check.as_of（drill 用）或当前 UTC。"""
+    raw = check.get("as_of")
+    if raw in (None, ""):
+        return dt.datetime.now(dt.timezone.utc)
+    if isinstance(raw, dt.datetime):
+        parsed = raw
+    elif isinstance(raw, dt.date):
+        return dt.datetime(raw.year, raw.month, raw.day)
+    else:
+        text = str(raw).strip()
+        try:
+            parsed = dt.datetime.fromisoformat(text)
+        except ValueError:
+            parsed = dt.datetime.combine(dt.date.fromisoformat(text), dt.time())
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed
+
+
+def parse_period(value, ptype):
+    """把水位归一为 date/datetime（varchar 日期形态混杂：YYYY / YYYY-MM / YYYY-MM-DD）。"""
+    if value is None:
+        return None
+    if isinstance(value, dt.datetime):
+        return value
+    if isinstance(value, dt.date):
+        return value
+    text = str(value).strip()
+    if ptype == "timestamp":
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return dt.datetime.strptime(text[:19], fmt)
+            except ValueError:
+                continue
+        return None
+    for fmt in ("%Y-%m-%d", "%Y-%m"):
+        try:
+            parsed = dt.datetime.strptime(text, fmt)
+            return parsed.date()
+        except ValueError:
+            continue
+    if len(text) == 4 and text.isdigit():  # 年度水位：按年初（保守）
+        return dt.date(int(text), 1, 1)
+    return None
+
+
+def age_days_of(as_of, latest):
+    """as_of 与水位之差（天，取整）；date 与 datetime 混算一律折算到 UTC 日历。"""
+    if latest is None:
+        return None
+    if isinstance(latest, dt.datetime):
+        if latest.tzinfo is None:
+            latest = latest.replace(tzinfo=dt.timezone.utc)
+        return (as_of - latest).total_seconds() / 86400.0
+    if isinstance(latest, dt.date):
+        base = as_of.date() if isinstance(as_of, dt.datetime) else as_of
+        if isinstance(latest, dt.datetime):
+            latest = latest.date()
+        return float((base - latest).days)
+    # 数值/字符串水位（如 202609）不参与 freshness（按未定义处理）
+    return None
+
+
 def columns_of(cur, table: str):
     cur.execute(
         """SELECT column_name FROM information_schema.columns
@@ -52,18 +145,16 @@ def table_exists(cur, table: str) -> bool:
 def gaps_staleness(cur, check):
     table, period = check["table"], check["period_col"]
     keys = check.get("key_cols") or []
-    allow = int(check.get("allow_lag", 2))
+    allow = float(check.get("allow_lag", 2))
     cmult = float(check.get("critical_mult", 2))
-    sel = ", ".join(keys + [f"max({period})"])
+    sel = ", ".join(keys + [period_agg(check)])
     grp = f"GROUP BY {', '.join(keys)}" if keys else ""
-    cur.execute(f"SELECT {sel} FROM {table} {grp}")
+    cur.execute(f"SELECT {sel} FROM {table}{where_sql(check)} {grp}")
     rows = cur.fetchall()
     if not rows:
         return []
-    if keys:
-        expected = max(r[-1] for r in rows if r[-1] is not None)
-    else:
-        expected = rows[0][0]
+    non_null = [r[-1] for r in rows if r[-1] is not None]
+    expected = max(non_null) if non_null else None
     out = []
     for r in rows:
         *key_vals, mx = r
@@ -72,20 +163,25 @@ def gaps_staleness(cur, check):
             sev = "critical"
             ks = ", ".join(f"{k}={v}" for k, v in zip(keys, key_vals)) or "all"
         else:
-            lag = expected - mx
-            if lag <= allow:
+            lag = lag_of(expected, mx) if expected is not None else None
+            if lag is not None and lag <= allow:
                 continue
-            sev = "critical" if lag > allow * cmult else "warn"
+            sev = "critical" if (lag is not None and lag > allow * cmult) else "warn"
             ks = ", ".join(f"{k}={v}" for k, v in zip(keys, key_vals)) or "all"
         out.append(
             dict(
                 check_kind="staleness",
                 key_space=ks[:500],
-                missing_count=(lag if lag is not None else 0),
+                # A group whose period column is entirely NULL has no usable
+                # period at all — it is *at least* one period short, so 0 is a
+                # lie. 0 also sorts last in the report's `ORDER BY
+                # missing_count DESC`, which buries the worst case (audit 04 §5).
+                missing_count=(int(lag) if lag is not None else 1),
                 missing_sample=None,
                 last_period=str(mx),
                 severity=sev,
-                detail={"expected_max": expected, "allow_lag": allow, "lag": lag},
+                detail={"expected_max": str(expected), "allow_lag": allow, "lag": lag,
+                        "period_type": check.get("period_type", "number")},
             )
         )
     return out
@@ -102,7 +198,7 @@ def gaps_missing_cells(cur, check):
     ks = sorted(excl) or ["id"]
     # 用 jsonb_each_text 展开所有非排除列
     sub = f"""SELECT (kv).key AS key, (kv).value AS val
-              FROM {table} t, LATERAL jsonb_each_text(to_jsonb(t) - ARRAY[{", ".join("'" + k + "'" for k in ks)}]::text[]) AS kv"""
+              FROM {table} t, LATERAL jsonb_each_text(to_jsonb(t) - ARRAY[{", ".join("'" + k + "'" for k in ks)}]::text[]) AS kv{where_sql(check)}"""
     cur.execute(
         f"""WITH cells AS ({sub})
             SELECT key, count(*) AS cells, count(*) FILTER (WHERE val IS NOT NULL AND val <> '') AS filled
@@ -134,7 +230,7 @@ def gaps_missing_rows(cur, check):
     ent, per = check["entity_col"], check["period_col"]
     ratio = float(check.get("min_ratio", 0.9))
     cur.execute(
-        f"SELECT {per}, count(DISTINCT {ent}) FROM {table} GROUP BY 1 ORDER BY 1"
+        f"SELECT {per}, count(DISTINCT {ent}) FROM {table}{where_sql(check)} GROUP BY 1 ORDER BY 1"
     )
     rows = cur.fetchall()
     if not rows:
@@ -162,10 +258,14 @@ def gaps_volume(cur, check):
     table, per = check["table"], check["period_col"]
     lo, hi = check.get("period_range", [None, None])
     ratio = float(check.get("min_ratio", 0.4))
-    where = ""
+    conds = []
     if lo is not None and hi is not None:
-        where = f"WHERE {per} BETWEEN {int(lo)} AND {int(hi)}"
-    cur.execute(f"SELECT {per}, count(*) FROM {table} {where} GROUP BY 1 ORDER BY 1")
+        conds.append(f"{per} BETWEEN {int(lo)} AND {int(hi)}")
+    extra = (check.get("where") or "").strip()
+    if extra:
+        conds.append(f"({extra})")
+    where = f" WHERE {' AND '.join(conds)}" if conds else ""
+    cur.execute(f"SELECT {per}, count(*) FROM {table}{where} GROUP BY 1 ORDER BY 1")
     rows = cur.fetchall()
     if not rows:
         return []
@@ -191,19 +291,101 @@ def gaps_volume(cur, check):
 def gaps_row_count(cur, check):
     table = check["table"]
     min_rows = int(check.get("min_rows", 1))
-    cur.execute(f"SELECT count(*) FROM {table}")
+    # sum_col：按列求和当「行数规模」（concept_source_stats.rows 是精确维护的
+    # 每源行数，避免对 semantic_observations 做全表 count）。
+    agg = f"COALESCE(sum({check['sum_col']}),0)" if check.get("sum_col") else "count(*)"
+    cur.execute(f"SELECT {agg} FROM {table}{where_sql(check)}")
     n = cur.fetchone()[0]
+    if n is None:
+        n = 0
     if n >= min_rows:
         return []
     return [
         dict(
             check_kind="row_count",
             key_space="table",
-            missing_count=min_rows - n,
+            missing_count=int(min_rows - n),
             missing_sample=None,
             last_period=None,
             severity=check.get("severity", "critical"),
-            detail={"rows": n, "min_rows": min_rows, "note": check.get("note")},
+            detail={"rows": int(n), "min_rows": min_rows,
+                    "agg": "sum" if check.get("sum_col") else "count",
+                    "note": check.get("note")},
+        )
+    ]
+
+
+def gaps_freshness(cur, check):
+    """停更判定：最新数据期（水位）距今不得超过 max_age_days。
+
+    与 ``staleness`` 的分工：staleness 是「组间落后」（同一源内实体互相比较），
+    freshness 是「整源停更」（水位对 wall clock）。证券业基线逐源一条，
+    容忍窗按源的产出节奏声明（日更 7 天 / 月更 60 天 / 季更 120 天）。
+    ``as_of`` 可把参照时刻前移，用于人工停更演练（把当前水位当作过期）。
+    """
+    table, period = check["table"], check["period_col"]
+    ptype = check.get("period_type", "date")
+    max_age = float(check["max_age_days"])
+    # 水位列可能是混合形态 varchar（YYYY / YYYY-MM / YYYY-MM-DD）——聚合取文本
+    # 最大值后在 Python 归一日历，避免 ::date 被脏形态炸掉整源扫描。
+    if ptype == "timestamp":
+        agg = f"max({period}::timestamp)"
+    else:
+        agg = f"max({period})"
+    cur.execute(f"SELECT {agg}, count(*) FROM {table}{where_sql(check)}")
+    raw_latest, n = cur.fetchone()
+    latest = parse_period(raw_latest, ptype)
+    as_of = as_of_moment(check)
+    if not n:
+        return [
+            dict(
+                check_kind="freshness",
+                key_space="latest=<none>",
+                # No rows at all is the *worst* coverage state, not "nothing
+                # missing". Reporting 0 made a dead source sort below healthy
+                # ones in the critical listing (ORDER BY missing_count DESC) and
+                # made sum(missing_count) treat it as complete. 1 matches the
+                # convention `gaps_missing_entity` already uses for an absent
+                # entity: at least one period is missing. `detail.reason` still
+                # says "no rows in scope" for whoever needs the distinction.
+                missing_count=1,
+                missing_sample=None,
+                last_period=None,
+                severity=check.get("severity", "critical"),
+                detail={"latest": None, "rows": 0, "max_age_days": max_age,
+                        "as_of": as_of.isoformat(), "reason": "no rows in scope",
+                        "note": check.get("note")},
+            )
+        ]
+    age = age_days_of(as_of, latest)
+    if age is None:
+        return [
+            dict(
+                check_kind="freshness",
+                key_space=f"latest={raw_latest}"[:500],
+                missing_count=1,
+                missing_sample=None,
+                last_period=str(raw_latest),
+                severity="warn",
+                detail={"latest": str(raw_latest), "rows": int(n),
+                        "age_days": None, "max_age_days": max_age,
+                        "as_of": as_of.isoformat(),
+                        "reason": "watermark unparseable", "note": check.get("note")},
+            )
+        ]
+    if age <= max_age:
+        return []
+    return [
+        dict(
+            check_kind="freshness",
+            key_space=f"latest={raw_latest}"[:500],
+            missing_count=int(age - max_age),
+            missing_sample=None,
+            last_period=str(raw_latest),
+            severity=check.get("severity", "critical"),
+            detail={"latest": str(raw_latest), "rows": int(n), "age_days": round(age, 2),
+                    "max_age_days": max_age, "as_of": as_of.isoformat(),
+                    "note": check.get("note")},
         )
     ]
 
@@ -211,7 +393,9 @@ def gaps_row_count(cur, check):
 def gaps_data_quality(cur, check):
     table = check["table"]
     pred = check["predicate"]
-    cur.execute(f"SELECT count(*) FROM {table} WHERE {pred}")
+    extra = (check.get("where") or "").strip()
+    cond = f"({pred}) AND ({extra})" if extra else pred
+    cur.execute(f"SELECT count(*) FROM {table} WHERE {cond}")
     n = cur.fetchone()[0]
     if n == 0:
         return []
@@ -236,7 +420,7 @@ def gaps_missing_entity(cur, check):
         expected = [r[0] for r in cur.fetchall()]
     if not expected:
         return []
-    cur.execute(f"SELECT DISTINCT {ent}::text FROM {table}")
+    cur.execute(f"SELECT DISTINCT {ent}::text FROM {table}{where_sql(check)}")
     present = {r[0] for r in cur.fetchall()}
     out = []
     for e in expected:
@@ -258,6 +442,7 @@ def gaps_missing_entity(cur, check):
 
 KINDS = {
     "staleness": gaps_staleness,
+    "freshness": gaps_freshness,
     "missing_cells": gaps_missing_cells,
     "missing_rows": gaps_missing_rows,
     "missing_entity": gaps_missing_entity,
