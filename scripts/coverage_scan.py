@@ -505,32 +505,36 @@ def scan_source(baseline: dict, run_key: str, conn_dq, verbose: bool):
     except Exception as e:  # noqa: BLE001
         status, note = "failed", f"{type(e).__name__}: {e}"
 
-    # 写报告：同 run_key+source 先清后写（幂等）
+    # 写报告：同 run_key+source 先清后写（幂等）。
+    # **只有本轮真的成功才动 coverage_gap**：README 承诺"扫描本身失败不破坏上一轮报告"，
+    # 而失败时 all_gaps 往往只攒了一半甚至为空，照常清写就等于把上一轮的证据抹掉——
+    # 看板会显示"没有缺口"，恰好在最不健康的时候报健康。
     dc = conn_dq.cursor()
-    dc.execute("DELETE FROM coverage_gap WHERE run_key=%s AND source=%s", (run_key, source))
-    for g in all_gaps:
-        dc.execute(
-            """INSERT INTO coverage_gap
-               (run_key, source, object, check_kind, key_space, missing_count,
-                missing_sample, last_period, severity, detail, updated_at)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
-               ON CONFLICT (run_key, source, object, check_kind, key_space) DO UPDATE
-                 SET missing_count=EXCLUDED.missing_count, missing_sample=EXCLUDED.missing_sample,
-                     last_period=EXCLUDED.last_period, severity=EXCLUDED.severity,
-                     detail=EXCLUDED.detail, updated_at=now()""",
-            (
-                run_key,
-                source,
-                baseline["object"],
-                g["check_kind"],
-                g["key_space"],
-                g["missing_count"],
-                json.dumps(g["missing_sample"], ensure_ascii=False) if g["missing_sample"] else None,
-                g["last_period"],
-                g["severity"],
-                json.dumps(g["detail"], ensure_ascii=False),
-            ),
-        )
+    if status == "success":
+        dc.execute("DELETE FROM coverage_gap WHERE run_key=%s AND source=%s", (run_key, source))
+        for g in all_gaps:
+            dc.execute(
+                """INSERT INTO coverage_gap
+                   (run_key, source, object, check_kind, key_space, missing_count,
+                    missing_sample, last_period, severity, detail, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, now())
+                   ON CONFLICT (run_key, source, object, check_kind, key_space) DO UPDATE
+                     SET missing_count=EXCLUDED.missing_count, missing_sample=EXCLUDED.missing_sample,
+                         last_period=EXCLUDED.last_period, severity=EXCLUDED.severity,
+                         detail=EXCLUDED.detail, updated_at=now()""",
+                (
+                    run_key,
+                    source,
+                    baseline["object"],
+                    g["check_kind"],
+                    g["key_space"],
+                    g["missing_count"],
+                    json.dumps(g["missing_sample"], ensure_ascii=False) if g["missing_sample"] else None,
+                    g["last_period"],
+                    g["severity"],
+                    json.dumps(g["detail"], ensure_ascii=False),
+                ),
+            )
     crit = sum(1 for g in all_gaps if g["severity"] == "critical")
     dc.execute(
         """INSERT INTO scan_run (run_key, source, started_at, finished_at, status, gap_count, critical_count, note)
