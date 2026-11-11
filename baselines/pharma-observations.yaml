@@ -15,8 +15,10 @@ checks:
     expected:
       - trial.new
       - trial.enrollment.planned
+      - trial.new.by_phase
       - catalog.drug.entries
       - catalog.drug.class_a_share
+      - catalog.drug.entries.by_section
     where: "source_used IN ('clinicaltrials-cn', 'nrdl-national-catalog')"
     severity: critical
     note: 医药四概念观测覆盖；缺哪个概念会在 key_space 里点名
