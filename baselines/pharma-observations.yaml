@@ -1,0 +1,36 @@
+source: pharma-observations
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: semantic_observations[concept in 医药四概念]
+report_only: false
+expected_source: >-
+  fd-industry-data/scripts/extract_pharma.py（把 clinicaltrials-cn / nrdl-national-catalog
+  的 crawl_items 抽成概念观测）
+checks:
+  - kind: missing_entity
+    table: semantic_observations
+    # 概念 code 作为"实体"来巡检：四个概念每个都必须至少有一条观测。
+    # 这条存在的理由很具体——采集层有 48xx 行数据而观测层零行时，任何按概念检索的产品
+    # 查询都查不到医药域，而 crawl_* 侧的巡检是全绿的（add-pharma-observation-extraction）。
+    entity_col: "(SELECT code FROM concepts c WHERE c.id = concept_id)"
+    expected:
+      - trial.new
+      - trial.enrollment.planned
+      - catalog.drug.entries
+      - catalog.drug.class_a_share
+    where: "source_used IN ('clinicaltrials-cn', 'nrdl-national-catalog')"
+    severity: critical
+    note: 医药四概念观测覆盖；缺哪个概念会在 key_space 里点名
+  - kind: staleness
+    table: semantic_observations
+    key_cols: [concept_id]
+    period_col: date
+    period_type: date
+    where: >-
+      source_used IN ('clinicaltrials-cn', 'nrdl-national-catalog')
+      AND (SELECT code FROM concepts c WHERE c.id = concept_id) = 'trial.new'
+    expected_max: auto
+    # 试验源按月窗口增量抓取（每轮回溯一个月），加上排期间隔，45 天是可接受的滞后上限。
+    allow_lag: 45
+    critical_mult: 2
+    severity: warn
+    note: 月度试验计数停更（目录是年度版，单独由目录源巡检管）
