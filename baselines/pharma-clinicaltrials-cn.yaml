@@ -1,9 +1,7 @@
 source: pharma-clinicaltrials-cn
 db_env: FD_CRAWL_DB_URL
 object: crawl_runs/crawl_items[source=clinicaltrials-cn]
-# 点亮前状态：单元已合入且有绿 golden，但尚未进入调度（schedule 已声明、
-# 未点亮 → 无 crawl_runs 行）。因此先 report_only，首次成功入库后翻成 false。
-report_only: true
+report_only: false
 expected_source: spiders/clinicaltrials-cn（ClinicalTrials.gov API v2，AREA[LocationCountry]China）
 checks:
   - kind: staleness
@@ -11,7 +9,7 @@ checks:
     key_cols: [source]
     period_col: started_at
     period_type: timestamp
-    where: "source = 'clinicaltrials-cn' AND status = 'ok'"
+    where: "source = 'clinicaltrials-cn' AND status = 'success'"
     expected_max: auto
     allow_lag: 1
     critical_mult: 2
@@ -21,7 +19,7 @@ checks:
     table: crawl_items
     where: >-
       run_id IN (SELECT id FROM crawl_runs WHERE source = 'clinicaltrials-cn'
-      AND status = 'ok')
+      AND status = 'success')
     min_rows: 1
     severity: critical
     note: 落地行规模（一个月中国境内试验实测数百行；0 行即采集塌陷）

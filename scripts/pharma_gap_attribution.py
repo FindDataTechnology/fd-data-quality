@@ -21,7 +21,7 @@ verdict 取值（在既有三值基础上补一个，理由见下）
 
 判定依据（每条都可复算，不靠人工记忆）
 ------------------------------------
-读 ``crawl_runs``：该 source 从未有 status='ok' 的运行 → ``not_yet_scheduled``。
+读 ``crawl_runs``：该 source 从未有 status='success' 的运行 → ``not_yet_scheduled``。
 本脚本只判定这一种情形；其余情形留给 ``annotate_wb_upstream`` 那类探测式归因，
 不在这里猜。
 
@@ -51,7 +51,7 @@ def ok_runs(crawl_conn, source: str, unit: str) -> int:
     """该单元在 crawl_runs 里的成功运行次数（按 manifest 的 name，不带 pharma- 前缀）。"""
     cur = crawl_conn.cursor()
     cur.execute(
-        "SELECT count(*) FROM crawl_runs WHERE source = %s AND status = 'ok'", (unit,)
+        "SELECT count(*) FROM crawl_runs WHERE source = %s AND status = 'success'", (unit,)
     )
     return cur.fetchone()[0]
 
@@ -86,7 +86,7 @@ def main(argv: list[str]) -> int:
         runs = ok_runs(crawl, source, unit)
         if runs == 0:
             verdict, reason = "not_yet_scheduled", (
-                f"单元 {unit} 在 crawl_runs 中无 status='ok' 运行；源已合入且有绿 golden，"
+                f"单元 {unit} 在 crawl_runs 中无 status='success' 运行；源已合入且有绿 golden，"
                 "未进调度。点亮 schedule 后本条应转为 fillable 或消失"
             )
         elif detail.get("rows") == 0:
