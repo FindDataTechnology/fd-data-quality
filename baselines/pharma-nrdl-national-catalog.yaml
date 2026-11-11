@@ -1,0 +1,31 @@
+source: pharma-nrdl-national-catalog
+db_env: FD_CRAWL_DB_URL
+object: crawl_runs/crawl_items[source=nrdl-national-catalog]
+# 点亮前状态：单元已合入且有绿 golden（解析西药 1446 + 中成药 1335），但年度
+# 调度尚未点亮 → 无 crawl_runs 行。首次成功入库后翻成 false。
+report_only: true
+expected_source: spiders/nrdl-national-catalog（国家医保局目录 PDF 附件，年度版）
+checks:
+  - kind: staleness
+    table: crawl_runs
+    key_cols: [source]
+    period_col: started_at
+    period_type: timestamp
+    where: "source = 'nrdl-national-catalog' AND status = 'ok'"
+    expected_max: auto
+    allow_lag: 1
+    critical_mult: 2
+    severity: warn
+    note: 年度目录未重灌（新版目录通常 12 月发布、次年 1 月执行）
+  - kind: row_count
+    table: crawl_items
+    where: >-
+      run_id IN (SELECT id FROM crawl_runs WHERE source = 'nrdl-national-catalog'
+      AND status = 'ok')
+    min_rows: 2700
+    severity: critical
+    note: >-
+      落地行下限 2700：2025 年版实测 3439 行（1446 西药 + 1335 中成药品种，
+      含 654 个 ★ 剂型变体）。若塌陷到只剩品种行会低于此值——这也是解析退化的
+      直接信号。条目数的硬判据在单元内部（对凡例 1446/1335 逐数比对），此处只
+      兜住"整份没落下来"这一层

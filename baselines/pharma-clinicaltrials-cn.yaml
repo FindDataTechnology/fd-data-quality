@@ -1,0 +1,29 @@
+source: pharma-clinicaltrials-cn
+db_env: FD_CRAWL_DB_URL
+object: crawl_runs/crawl_items[source=clinicaltrials-cn]
+# 点亮前状态：单元已合入且有绿 golden，但尚未进入调度（schedule 已声明、
+# 未点亮 → 无 crawl_runs 行）。因此先 report_only，首次成功入库后翻成 false。
+report_only: true
+expected_source: spiders/clinicaltrials-cn（ClinicalTrials.gov API v2，AREA[LocationCountry]China）
+checks:
+  - kind: staleness
+    table: crawl_runs
+    key_cols: [source]
+    period_col: started_at
+    period_type: timestamp
+    where: "source = 'clinicaltrials-cn' AND status = 'ok'"
+    expected_max: auto
+    allow_lag: 1
+    critical_mult: 2
+    severity: warn
+    note: 月度采集停更（上游补登记历史月不触发本检查，只看到最近一次成功运行）
+  - kind: row_count
+    table: crawl_items
+    where: >-
+      run_id IN (SELECT id FROM crawl_runs WHERE source = 'clinicaltrials-cn'
+      AND status = 'ok')
+    min_rows: 1
+    severity: critical
+    note: 落地行规模（一个月中国境内试验实测数百行；0 行即采集塌陷）
+# 不做 missing_cells：原始行是 crawl_items.payload(jsonb)，列级填充率由单元自身的
+# 列声明保证——nct_id 为空的行在 spider._row 里就被丢弃，表级 cells 检查只会误报。
