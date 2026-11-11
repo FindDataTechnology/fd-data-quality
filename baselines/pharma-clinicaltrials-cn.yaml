@@ -1,5 +1,5 @@
 source: pharma-clinicaltrials-cn
-db_env: FD_CRAWL_DB_URL
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
 object: crawl_runs/crawl_items[source=clinicaltrials-cn]
 report_only: false
 expected_source: spiders/clinicaltrials-cn（ClinicalTrials.gov API v2，AREA[LocationCountry]China）
