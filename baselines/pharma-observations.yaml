@@ -34,3 +34,19 @@ checks:
     critical_mult: 2
     severity: warn
     note: 月度试验计数停更（目录是年度版，单独由目录源巡检管）
+  # 抽取器**存活**（change schedule-pharma-observation-extraction）。
+  # 必须是 freshness 而不是 staleness：staleness 的参照物是「本表内数据自身的最大值」，
+  # 抽取器停摆后参照物一起停在旧时刻，lag 恒为 0 —— 门永远绿（死门）。freshness 拿水位
+  # 对 wall clock，才答得出"上次成功抽取是多久以前"。
+  # 与上面 trial.new 那条的分工：这条答"抽取器还活着吗"，那条答"数据新不新"。
+  # 抽取失败时台账写 status='failed'，所以只有 success 才代表存活。
+  - kind: freshness
+    table: executions
+    period_col: started_at
+    period_type: timestamp
+    where: "status = 'success'"
+    # 日更一次 + 半天缓冲：36 小时（=1.5 天）没成功过一次就是问题，
+    # 与"上游没新数据"无关——那是上面那条管的。
+    max_age_days: 1.5
+    severity: critical
+    note: 医药观测抽取器停摆（CronJob fd-pharma-observations）——按 executions 台账判，不看数据涨没涨
