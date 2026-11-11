@@ -17,13 +17,18 @@ checks:
     note: 年度目录未重灌（新版目录通常 12 月发布、次年 1 月执行）
   - kind: row_count
     table: crawl_items
+    # 只统计**最近一次成功 run**：早先写成「所有成功 run 的并集」，实测 6 个 run 累加
+    # 16272 行，于是一次被截到 1000 行的 run（5387）完全被历史 run 盖住——阈值再高
+    # 也照样绿。判据必须对准"这一次落了没有"。
     where: >-
-      run_id IN (SELECT id FROM crawl_runs WHERE source = 'nrdl-national-catalog'
-      AND status = 'success')
-    min_rows: 3900
+      run_id = (SELECT id FROM crawl_runs WHERE source = 'nrdl-national-catalog'
+      AND status = 'success' ORDER BY id DESC LIMIT 1)
+    min_rows: 4800
     severity: critical
     note: >-
-      落地行下限 3900：2025 年版实测 3911 行（西药 1446 + 中成药 1335 + 谈判药品
-      472 的唯一品种编号，行数含 ★ 剂型变体）。若谈判段解析塌陷会低于此值——这是
-      解析退化的直接信号。条目数的硬判据在单元内部（对凡例 1446/1335/472 逐数比对），
-      此处只兜住"整份没落下来"这一层
+      最近一次成功 run 的落地行下限 4800：2025 年版实测 4835 行 = 目录条目 3911
+      （西药 1446 + 中成药 1335 + 谈判药品 472 的唯一品种编号，行数含 ★ 剂型变体）
+      + 中药饮片 892 + 饮片黑名单 32（31 个药名 + 1 条类目）。任一段解析塌陷都会低于
+      此值——这是解析退化的直接信号。条目数的硬判据在单元内部（对凡例
+      1446/1335/472/892 逐数比对，且饮片要求序号恰好覆盖 1..892），此处只兜住
+      "整份没落下来"这一层
