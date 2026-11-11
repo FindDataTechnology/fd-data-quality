@@ -50,3 +50,13 @@ checks:
     max_age_days: 1.5
     severity: critical
     note: 医药观测抽取器停摆（CronJob fd-pharma-observations）——按 executions 台账判，不看数据涨没涨
+  # 单位不得为空（change fix-concept-freshness-window）。predicate 写的是**违规形态**：
+  # 抽取器曾把 unit 写死 NULL，读侧拿到 unit: null 却一切"跑得通"，只有消费方看出不对。
+  # 有了这条，退化成 NULL 会在下一轮巡检里点名。
+  - kind: data_quality
+    table: semantic_observations
+    predicate: "unit IS NULL"
+    where: >-
+      concept_id IN (SELECT id FROM concepts WHERE source = 'pharma-domain-stack')
+    severity: warn
+    note: 医药观测缺单位（应为 count/persons/percent）
