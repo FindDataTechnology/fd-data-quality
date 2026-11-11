@@ -62,3 +62,15 @@ checks:
       concept_id IN (SELECT id FROM concepts WHERE source = 'pharma-domain-stack')
     severity: warn
     note: 医药观测缺单位（应为 count/persons/percent）
+  # 频率必须是规范拼写（change fix-concept-freshness-window 的回归门）。
+  # 新鲜度表只认 monthly/quarterly/yearly 等键，未命中即默认 1 小时窗口——年度概念抓完
+  # 一小时就被判过期，点读退化为 no eligible source。词表侧有 pytest 守；这条守 DB 侧
+  # （有人手工改库或旧播种脚本残留时能发现）。
+  - kind: data_quality
+    table: concepts
+    predicate: >-
+      lower(coalesce(frequency, '')) <> ALL (ARRAY[
+        'realtime','daily','irregular','weekly','monthly','quarterly','yearly','unknown'])
+    where: "concept_code IN ('ClinicalTrial', 'InsuranceCatalogEntry')"
+    severity: warn
+    note: 医药概念频率是非规范拼写（会退化成 1 小时新鲜期）
