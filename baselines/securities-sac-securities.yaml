@@ -1,0 +1,20 @@
+source: securities-sac-securities
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: fd_open_data.semantic_observations[sac 2568-2569]
+report_only: false
+expected_source: spiders/sac-securities（证券业协会经营数据；每月 8 日 21:50 UTC）
+checks:
+  - kind: freshness
+    table: semantic_observations
+    period_col: date
+    period_type: date
+    where: "concept_id IN (2568,2569)"
+    max_age_days: 60
+    severity: critical
+    note: SAC 月更停更（营业收入/净利润；月度容忍 60 天）
+  - kind: row_count
+    table: semantic_observations
+    where: "concept_id IN (2568,2569)"
+    min_rows: 1
+    severity: critical
+    note: SAC 族行数规模（点亮前预期缺口）

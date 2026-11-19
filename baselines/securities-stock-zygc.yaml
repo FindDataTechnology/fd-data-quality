@@ -1,0 +1,20 @@
+source: securities-stock-zygc
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: fd_open_data.semantic_observations[zygc 2566-2567]
+report_only: false
+expected_source: spiders/stock-zygc（主营构成；每月 1 日 22:50 UTC）
+checks:
+  - kind: freshness
+    table: semantic_observations
+    period_col: date
+    period_type: date
+    where: "concept_id IN (2566,2567)"
+    max_age_days: 120
+    severity: critical
+    note: 主营构成季更停更（分行业/分产品/分地区；季报节奏 120 天）
+  - kind: row_count
+    table: semantic_observations
+    where: "concept_id IN (2566,2567)"
+    min_rows: 1
+    severity: critical
+    note: 主营构成族行数规模（点亮前预期缺口）

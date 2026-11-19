@@ -1,0 +1,21 @@
+source: securities-astock-daily
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: fd_open_data.concept_source_stats[price 233-238]
+report_only: false
+expected_source: scraw-akshare 行情增量管道（crawl_policy 按交易日增量；权威存量在分片 xinru3）
+checks:
+  - kind: freshness
+    table: concept_source_stats
+    period_col: latest_date
+    period_type: date
+    where: "concept_id BETWEEN 233 AND 238"
+    max_age_days: 5
+    severity: critical
+    note: 行情日线停更（交易日超过 5 天无新数据期；2026-07 断档回补跟踪项）
+  - kind: row_count
+    table: concept_source_stats
+    sum_col: rows
+    where: "concept_id BETWEEN 233 AND 238"
+    min_rows: 300000
+    severity: critical
+    note: 行情族行数规模（master 可见口径；权威 46M 行在分片侧，主库统计不含分片）

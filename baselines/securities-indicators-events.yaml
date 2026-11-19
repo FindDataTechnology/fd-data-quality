@@ -1,0 +1,20 @@
+source: securities-indicators-events
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: fd_open_data.semantic_observations[indicators/events 2491-2505]
+report_only: false
+expected_source: crawl_policy 2658 securities-indicators-events-whitelist（direct bulk_ingest_stock_indicators_events，805 家白名单）
+checks:
+  - kind: freshness
+    table: semantic_observations
+    period_col: date
+    period_type: date
+    where: "concept_id BETWEEN 2491 AND 2505"
+    max_age_days: 120
+    severity: critical
+    note: 财务指标/业绩事件停更（季报节奏容忍 120 天）
+  - kind: row_count
+    table: semantic_observations
+    where: "concept_id BETWEEN 2491 AND 2505"
+    min_rows: 500
+    severity: critical
+    note: 指标/事件族行数规模（2026-11-07 实测 3,879；805 家白名单仍在铺量）

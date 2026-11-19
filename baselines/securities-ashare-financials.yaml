@@ -1,0 +1,21 @@
+source: securities-ashare-financials
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: fd_open_data.concept_source_stats[financials 三大报表/指标 239-244,258-265,2222-2230]
+report_only: false
+expected_source: crawl_policy 7 ashare-financials-snapshot（direct bulk_ingest_financials_aggregate，白名单过滤）
+checks:
+  - kind: freshness
+    table: concept_source_stats
+    period_col: latest_date
+    period_type: date
+    where: "concept_id IN (239,240,241,242,243,244,258,259,260,261,262,263,264,265,2222,2223,2224,2225,2226,2227,2228,2229,2230)"
+    max_age_days: 120
+    severity: critical
+    note: 财报链停更（季报节奏容忍 120 天，覆盖披露滞后）
+  - kind: row_count
+    table: concept_source_stats
+    sum_col: rows
+    where: "concept_id IN (239,240,241,242,243,244,258,259,260,261,262,263,264,265,2222,2223,2224,2225,2226,2227,2228,2229,2230)"
+    min_rows: 3000000
+    severity: critical
+    note: 财务六表行数规模（2026-11-05 实测 4,391,529）

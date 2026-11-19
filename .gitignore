@@ -32,3 +32,6 @@ venv/
 .DS_Store
 .idea/
 .vscode/
+
+# graph cache (derived)
+graphify-out/

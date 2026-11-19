@@ -1,0 +1,20 @@
+source: securities-sse-szse-market-stats
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: fd_open_data.semantic_observations[market stats 2563-2565]
+report_only: false
+expected_source: spiders/sse-szse-market-stats（沪深市场统计；交易日 20:50 UTC）
+checks:
+  - kind: freshness
+    table: semantic_observations
+    period_col: date
+    period_type: date
+    where: "concept_id IN (2563,2564,2565)"
+    max_age_days: 7
+    severity: critical
+    note: 市场统计日更停更（成交额/成交量/平均市盈率）
+  - kind: row_count
+    table: semantic_observations
+    where: "concept_id IN (2563,2564,2565)"
+    min_rows: 1
+    severity: critical
+    note: 市场统计族行数规模（点亮前预期缺口）

@@ -1,0 +1,20 @@
+source: securities-lhb-daily
+db_env: FD_OPEN_DATA_MCP_DATABASE_URL
+object: fd_open_data.semantic_observations[lhb 2570-2572]
+report_only: false
+expected_source: spiders/lhb-daily（东财龙虎榜；交易日 23:50 UTC）
+checks:
+  - kind: freshness
+    table: semantic_observations
+    period_col: date
+    period_type: date
+    where: "concept_id IN (2570,2571,2572)"
+    max_age_days: 7
+    severity: critical
+    note: 龙虎榜日更停更（净买入/买入/卖出）
+  - kind: row_count
+    table: semantic_observations
+    where: "concept_id IN (2570,2571,2572)"
+    min_rows: 1
+    severity: critical
+    note: 龙虎榜族行数规模（点亮前预期缺口）
