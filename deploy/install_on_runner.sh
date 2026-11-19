@@ -1,5 +1,5 @@
 #!/bin/bash
-# 在 runner（xinru-master）上安装 fd-data-quality 的巡检与补齐任务。
+# 在 runner（the coordinator node）上安装 fd-data-quality 的巡检与补齐任务。
 # 为何用 docker：runner 自带 python3.8，脚本按 3.12 写；docker 保证版本一致且不污染宿主。
 # 幂等：可重复执行（重建镜像、保留 .env，重写 cron）。
 # 用法：sudo bash install_on_runner.sh [URL-ENCODED_PGPASS]
@@ -13,7 +13,7 @@ APP_DIR=/opt/fd-data-quality
 ENV_FILE=$APP_DIR/.env
 CRON_FILE=/etc/cron.d/fd-data-quality
 IMAGE=fd-data-quality:local
-PG_HOST=100.64.0.5
+PG_HOST=<db-host>
 PGPASS_URL="${1:-}"
 PROXY_FORWARDER="${FD_PROXY_FORWARDER:-}"
 OPEN_DATA_MCP_DATABASE_URL="${FD_OPEN_DATA_MCP_DATABASE_URL:-}"
@@ -52,7 +52,7 @@ print_worker_template() {
       ;;
   esac
 
-  # N 按机器唯一；例如 xinru-master=1、chengsi=2，以此类推。
+  # N 按机器唯一；例如 the coordinator node=1、chengsi=2，以此类推。
   printf '%s\n' \
     "docker run -d --restart unless-stopped \\" \
     "  --name fd-nbs-worker-${index} \\" \

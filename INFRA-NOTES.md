@@ -2,7 +2,7 @@
 
 ## NBS 多机执行链路
 
-- coordinator 在 runner（当前为 `xinru-master`）触发：
+- coordinator 在 runner（当前为 `the coordinator node`）触发：
   `scripts/backfill_nbs.py --mode coordinate --dbcode hgnd,hgyd`。
 - coordinator 只负责 schema migration、指标发现、按 indicator 切 shard、写入
   `cnstats.nbs_shard` 和父 run；它不是常驻调度器。
@@ -10,14 +10,14 @@
   认领 `pending` 或 lease 已过期的 shard，处理完成后释放 lease。
 - 每台 worker 的 NBS HTTP 请求通过数据面 `FD_PROXY_FORWARDER` 的 `/acquire`、
   `/release` 接口选择出口；请求标识为 `source=nbs`。若机器上有本机 host-network
-  forwarder，用 `http://127.0.0.1:8080`；当前 canary 使用 xinru-master 上的共享
-  Docker 数据面 forwarder `http://100.64.0.3:8080`。中央 `fd-proxy-service` 的
+  forwarder，用 `http://127.0.0.1:8080`；当前 canary 使用 the coordinator node 上的共享
+  Docker 数据面 forwarder `http://<db-host>:8080`。中央 `fd-proxy-service` 的
   `:30090` 只用于运维检查，不是 worker 数据请求端点。全局 QPS 和出口并发限制由
   proxy forwarder/Redis 统一控制，worker 使用 `--min-interval 0`，不在本地叠加
   per-worker 限速。
-- 当前共享 forwarder 是独立 Docker 容器 `fd-proxy-fw-nbs`（xinru-master，
+- 当前共享 forwarder 是独立 Docker 容器 `fd-proxy-fw-nbs`（the coordinator node，
   `--network host`，镜像来自 Harbor），不修改任何 k3s 资源；DB/Redis 走 mesh
-  `100.64.0.3:30432/30380`。
+  `<db-host>:30432/30380`。
 - 不执行 `k3s join`、`k3s merge` 或其他集群合并操作；不修改 cheap 集群。
   各机器只管理自己的 Docker 容器、`.env`、日志和 cron。
 
@@ -35,7 +35,7 @@
 
 ## shard 表位置
 
-- 数据库：Windows PG `100.64.0.5:5432`
+- 数据库：Windows PG `<db-host>:5432`
 - schema：`cnstats`（SQL 中为 `public.nbs_shard`）
 - 表：`nbs_shard`（当前 migration：`003_nbs_shard_execution_identity`，新增
   `regcode/endpoint/target_hash` 和执行身份唯一索引）
@@ -51,11 +51,11 @@
 
 | 机器 | 角色 | worker 名称建议 |
 |---|---|---|
-| `xinru-master` | coordinator runner；NBS worker | `fd-nbs-worker-1` |
+| `the coordinator node` | coordinator runner；NBS worker | `fd-nbs-worker-1` |
 | `chengsi` | NBS worker | `fd-nbs-worker-2` |
-| `zihan` | NBS worker | `fd-nbs-worker-3` |
-| `xinru-server1` | NBS worker | `fd-nbs-worker-4` |
-| `xinru-server2` | proxy forwarder/出口节点；需要时也可运行 NBS worker | `fd-nbs-worker-5` |
+| `a worker node` | NBS worker | `fd-nbs-worker-3` |
+| `a worker node` | NBS worker | `fd-nbs-worker-4` |
+| `an egress node` | proxy forwarder/出口节点；需要时也可运行 NBS worker | `fd-nbs-worker-5` |
 
 所有 worker 复用本地镜像 `fd-data-quality:local`，并通过各自机器上的
 `/opt/fd-data-quality/.env` 注入：

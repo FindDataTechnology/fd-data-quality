@@ -6,7 +6,7 @@
    （libpq 14）把 DSN 串里的 userinfo 原样使用、不做 unquote —— 直接 connect(dsn) 会
    认证失败。这里统一 unquote 后再按 keyword 连接，并在认证失败时回退到「原样口令」
    以兼容未编码的 DSN（生产 Secret 可能是任意一种）。
-2. Windows PG（100.64.0.5，PostgreSQL 18.6 on x86_64-windows）在**客户端编码协商之前**
+2. Windows PG（<db-host>，PostgreSQL 18.6 on x86_64-windows）在**客户端编码协商之前**
    的错误消息是 GBK 编码的（如「用户 "postgres" Password 认证失败」）。psycopg2 按 utf-8
    解码这段字节，抛 UnicodeDecodeError 把真实原因盖掉。这里把原始字节按 GBK 解回来，
    让失败原因可见（且消息里不含口令）。

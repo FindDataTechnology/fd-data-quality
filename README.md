@@ -1,5 +1,7 @@
 # fd-data-quality — 数据覆盖度巡检与补齐
 
+> **Part of the [Wire line (寻数·柏讯)](https://www.finddatatech.cloud/products/wire) of [FindData](https://www.finddatatech.cloud)** — data quality baselines: per-source invariants and regression gates over the observation catalogue.
+
 本目录实现 OpenSpec change `data-coverage-backfill`：把"缺什么、缺多少、新到什么时候"变成可查询的缺口报告，并提供把缺口补上的执行器。
 
 ## 结构
@@ -12,7 +14,7 @@ fd-data-quality/
   scripts/annotate_wb_upstream.py  # 缺口归因：WB 停更缺口 → 上游停发/可补齐（写 coverage_gap.detail.verdict）
   scripts/backfill_nbs.py     # 统计局执行器（/dg/website 新接口 → Windows cnstats 库）
   scripts/reload_check.py     # 文件驱动重灌契约的校验器（GTA/年鉴/城市面板）
-  deploy/install_on_runner.sh # runner（xinru-master）部署：docker 镜像 + /etc/cron.d/fd-data-quality
+  deploy/install_on_runner.sh # runner（the coordinator node）部署：docker 镜像 + /etc/cron.d/fd-data-quality
   INFRA-NOTES.md          # NBS 多机链路、观测落点与机器清单
   CONTRACTS.md            # 各执行器 CLI 契约与回执格式
   requirements.txt        # 运行依赖
@@ -77,14 +79,14 @@ NBS 分片模式使用 Windows PG 中的任务表协调，不把本地 JSON 状�
 
 NBS 容器至少需要：
 
-`FD_PROXY_FORWARDER` 指向**数据面 proxy-fw 的 `/acquire` `/release` 端口**，不是中央 `fd-proxy-service` 的 `:30090` 控制端口。若每台机器有自己的 host-network forwarder，用 `http://127.0.0.1:8080`；当前 canary 使用 xinru-master 上的共享数据面 forwarder `http://100.64.0.3:8080`。中央端口只用于运维检查；worker 必须通过数据面 forwarder 获取可路由的 upstream。
+`FD_PROXY_FORWARDER` 指向**数据面 proxy-fw 的 `/acquire` `/release` 端口**，不是中央 `fd-proxy-service` 的 `:30090` 控制端口。若每台机器有自己的 host-network forwarder，用 `http://127.0.0.1:8080`；当前 canary 使用 the coordinator node 上的共享数据面 forwarder `http://<db-host>:8080`。中央端口只用于运维检查；worker 必须通过数据面 forwarder 获取可路由的 upstream。
 
 ```bash
 # 本机 host-network proxy-fw：http://127.0.0.1:8080
-# 当前共享 canary forwarder：http://100.64.0.3:8080
-export FD_PROXY_FORWARDER='http://100.64.0.3:8080'
-export FD_CNSTATS_PG_URL='postgresql://<user>:<url-encoded-password>@100.64.0.5:5432/cnstats'
-export FD_DQ_PG_URL='postgresql://<user>:<url-encoded-password>@100.64.0.5:5432/dq'
+# 当前共享 canary forwarder：http://<db-host>:8080
+export FD_PROXY_FORWARDER='http://<db-host>:8080'
+export FD_CNSTATS_PG_URL='postgresql://<user>:<url-encoded-password>@<db-host>:5432/cnstats'
+export FD_DQ_PG_URL='postgresql://<user>:<url-encoded-password>@<db-host>:5432/dq'
 ```
 
 可选的观测库 DSN 二选一；`FD_PROXY_FETCH_LOG_DSN` 优先：
@@ -129,7 +131,7 @@ sudo docker run --rm \
 
 ### worker 入口
 
-在每台机器上使用唯一编号（例如 xinru-master=1、chengsi=2）：
+在每台机器上使用唯一编号（例如 the coordinator node=1、chengsi=2）：
 
 ```bash
 sudo docker run -d --restart unless-stopped \
@@ -172,11 +174,11 @@ sudo env \
 
 脚本会写入 `/opt/fd-data-quality/.env`（权限 600）、构建 `fd-data-quality:local`；runner 会重写 `/etc/cron.d/fd-data-quality`，worker 机器在 `FD_NBS_CRON=0` 时跳过 coordinator cron，并打印本机 worker 启动模板。脚本不会执行 `k3s join`、`k3s merge` 或任何 cheap 集群变更。
 
-4. 在每台机器上用唯一编号启动 worker（例如 xinru-master=1、chengsi=2、zihan=3、xinru-server1=4）；coordinator cron 只在一台 runner 上运行。
+4. 在每台机器上用唯一编号启动 worker（例如 the coordinator node=1、chengsi=2、a worker node=3、a worker node=4）；coordinator cron 只在一台 runner 上运行。
 
 ## `nbs_shard` 表
 
-位置：Windows PG `100.64.0.5:5432` 的 `cnstats` 库（`public.nbs_shard`）。coordinator 独占 migration；worker 只读写 shard lease 和完成进度，不执行 DDL。
+位置：Windows PG `<db-host>:5432` 的 `cnstats` 库（`public.nbs_shard`）。coordinator 独占 migration；worker 只读写 shard lease 和完成进度，不执行 DDL。
 
 ```sql
 CREATE TABLE IF NOT EXISTS nbs_shard (

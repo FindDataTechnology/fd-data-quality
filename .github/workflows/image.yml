@@ -6,7 +6,7 @@
 # Tencent worker 机以 FD_NBS_PULL_IMAGE=1 从 ccr 拉取替代本地 build）：
 #   hkccr.ccs.tencentyun.com/lawcraw-business/fd-data-quality
 # tag = sha-${GITHUB_SHA::7}（不可变，部署引用）+ 滚动 master（本仓主干为
-# master 分支）。runner 推 hkccr（港，跨洋快）→ cheap-3 tcr-relay 回灌 ccr
+# master 分支）。runner 推 hkccr（港，跨洋快）→ the relay node tcr-relay 回灌 ccr
 # （前置：/etc/tcr-relay/repos.conf 登记 lawcraw-business/fd-data-quality）。
 #
 # 本仓 gitee 私有、org GHA 被 billing 挡：经 scs001 个人镜像仓（免费
