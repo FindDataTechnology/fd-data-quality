@@ -1,18 +1,5 @@
-# Container image publish — GitHub Actions → Tencent TCR 个人版。
-# 标准通道 per openspec retire-jenkins-harbor §3（2026-10-09 用户裁决：构建一律
-# 走 GHA+TCR；Jenkins/Harbor 退役）。Jenkins 在建通道随 §5 摘 webhook 消亡。
-#
-# fd-data-quality 主镜像（Dockerfile：python:3.12-slim，NBS 巡检/补齐工具，
-# Tencent worker 机以 FD_NBS_PULL_IMAGE=1 从 ccr 拉取替代本地 build）：
-#   hkccr.ccs.tencentyun.com/lawcraw-business/fd-data-quality
-# tag = sha-${GITHUB_SHA::7}（不可变，部署引用）+ 滚动 master（本仓主干为
-# master 分支）。runner 推 hkccr（港，跨洋快）→ the relay node tcr-relay 回灌 ccr
-# （前置：/etc/tcr-relay/repos.conf 登记 lawcraw-business/fd-data-quality）。
-#
-# 本仓 gitee 私有、org GHA 被 billing 挡：经 scs001 个人镜像仓（免费
-# minutes）触发构建，形态同 scs001/fd-wire（私有镜像仓，2026-10-09 实证）。
-#
-# Secrets（per-repo）：TCR_USERNAME / TCR_PASSWORD
+# 共享实现见 FindDataTechnology/fd-ci（openspec: extract-shared-ci-workflow）。
+# 本文件只声明「出什么镜像」，构建逻辑不在这里。
 name: image
 
 on:
@@ -20,93 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
-concurrency:
-  group: image-${{ github.ref }}
-  cancel-in-progress: true
-
-permissions:
-  contents: read
-
-env:
-  REGISTRY: hkccr.ccs.tencentyun.com
-  NAMESPACE: lawcraw-business
-  IMAGE_NAME: fd-data-quality
-  DOCKERFILE: Dockerfile
-
 jobs:
-  build-push:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.TCR_USERNAME }}
-          password: ${{ secrets.TCR_PASSWORD }}
-
-      # 本仓主干是 master，滚动 tag 即 master（非 main），闸门基线必须读它。
-      - id: prev
-        name: 读 master 当前 digest（内容基线）
-        run: |
-          img="$REGISTRY/$NAMESPACE/$IMAGE_NAME"
-          cur=$(docker buildx imagetools inspect "$img:master" \
-                --format '{{.Manifest.Digest}}' 2>/dev/null || true)
-          echo "digest=$cur" >> "$GITHUB_OUTPUT"
-          echo "$IMAGE_NAME master 当前 digest: ${cur:-<不存在，本次为首次构建>}"
-
-      - id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=master
-
-      - id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ${{ env.DOCKERFILE }}
-          platforms: linux/amd64
-          push: true
-          provenance: false
-          tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # 内容闸门：digest 变了才铸 sha-<commit>，让「同内容多 tag」结构上不可能。
-      - name: 内容变了才铸不可变 tag
-        env:
-          NEW: ${{ steps.build.outputs.digest }}
-          OLD: ${{ steps.prev.outputs.digest }}
-        run: |
-          set -euo pipefail
-          img="$REGISTRY/$NAMESPACE/$IMAGE_NAME"
-          [ -n "$NEW" ] || { echo "::error::构建未产出 digest"; exit 1; }
-          if [ "$NEW" = "$OLD" ]; then
-            echo "内容未变（${NEW}）：不铸新 tag"
-            {
-              echo "### 内容未变，未产出新 tag"
-              echo ""
-              echo "本次构建与 \`master\` 当前指向完全一致。"
-              echo ""
-              echo "- 可直接 pin：\`$img@$NEW\`"
-              echo "- 滚动引用：\`$img:master\`"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          tag="sha-${GITHUB_SHA::7}"
-          docker buildx imagetools create -t "$img:$tag" "$img@$NEW"
-          echo "已铸 $tag → $NEW"
-          {
-            echo "### 内容有变化，已铸不可变 tag"
-            echo ""
-            echo "| 字段 | 值 |"
-            echo "|---|---|"
-            echo "| tag | \`$tag\` |"
-            echo "| digest | \`$NEW\` |"
-            echo "| 上一内容 digest | \`${OLD:-<无>}\` |"
-          } >> "$GITHUB_STEP_SUMMARY"
+  fd-data-quality:
+    uses: FindDataTechnology/fd-ci/.github/workflows/image-build.yml@main
+    secrets: inherit
+    with:
+      image: fd-data-quality
+      namespace: lawcraw-business
