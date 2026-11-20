@@ -13,8 +13,16 @@ APP_DIR=/opt/fd-data-quality
 ENV_FILE=$APP_DIR/.env
 CRON_FILE=/etc/cron.d/fd-data-quality
 IMAGE=fd-data-quality:local
-PG_HOST=<db-host>
+# 真实 host 写在这里而不是占位符：脱敏曾把它换成 `<db-host>`（2026-11-19 提交
+# 7fd79b7），那让 `PG_HOST=<db-host>` 变成一次重定向尝试 —— 脚本在 parse 阶段就
+# 语法错，根本无法执行（`bash -n` 报 `syntax error near unexpected token newline`）。
+# 这是一个被脱敏改坏的活脚本，比「暴露一个内网 IP」严重得多。
+PG_HOST="${FD_PG_HOST:-100.64.0.5}"
 PGPASS_URL="${1:-}"
+# PG 用户可配置：windows-admin 的 postgres 口令已不可考（2026-11-20），
+# 而已知可用的是只读账号。回填需要写权限，所以必须显式指定有写权限的用户，
+# 不要默认回 postgres——那会重演「口令对不上 → 只看到 UnicodeDecodeError」。
+PG_USER="${FD_PG_USER:-postgres}"
 PROXY_FORWARDER="${FD_PROXY_FORWARDER:-}"
 OPEN_DATA_MCP_DATABASE_URL="${FD_OPEN_DATA_MCP_DATABASE_URL:-}"
 PROXY_FETCH_LOG_DSN="${FD_PROXY_FETCH_LOG_DSN:-}"
@@ -37,6 +45,9 @@ usage() {
   FD_NBS_WORKER_INDEX            当前机器 worker 编号（默认 1）
   FD_NBS_PULL_IMAGE              设为 1 时先 docker pull，再本地 build（默认 0）
   FD_NBS_CRON                    1=写 coordinator cron（runner 默认）；0=仅 worker 机器，不写 NBS coordinator cron
+  FD_PG_USER                     PG 用户（默认 postgres）。**该 host 的 postgres 口令 2026-11-20
+                                 已不可考**；若只有只读账号（如 fdbiz_ro）则回填会失败——
+                                 回填需要 INSERT/UPDATE 权限，务必传有写权限的用户
 
 打印当前机器的 worker 启动模板：
   FD_NBS_WORKER_INDEX=N bash $0 --print-worker-template
@@ -110,12 +121,12 @@ if [ -n "$PGPASS_URL" ] || [ ! -f "$ENV_FILE" ]; then
     echo "!! 首次安装必须传入 URL 编码后的口令（% -> %25, # -> %23）"; exit 2
   fi
   cat > "$ENV_FILE" <<EOF
-FD_DQ_PG_URL=postgresql://postgres:${PGPASS_URL}@$PG_HOST:5432/dq
-FD_WB_PG_URL=postgresql://postgres:${PGPASS_URL}@$PG_HOST:5432/world_bank
-FD_CNSTATS_PG_URL=postgresql://postgres:${PGPASS_URL}@$PG_HOST:5432/cnstats
-FD_GTA_PG_URL=postgresql://postgres:${PGPASS_URL}@$PG_HOST:5432/gta_panel
-FD_CITY_PG_URL=postgresql://postgres:${PGPASS_URL}@$PG_HOST:5432/china_city_panel
-FD_YEARBOOK_PG_URL=postgresql://postgres:${PGPASS_URL}@$PG_HOST:5432/yearbook_catalog
+FD_DQ_PG_URL=postgresql://${PG_USER}:${PGPASS_URL}@$PG_HOST:5432/dq
+FD_WB_PG_URL=postgresql://${PG_USER}:${PGPASS_URL}@$PG_HOST:5432/world_bank
+FD_CNSTATS_PG_URL=postgresql://${PG_USER}:${PGPASS_URL}@$PG_HOST:5432/cnstats
+FD_GTA_PG_URL=postgresql://${PG_USER}:${PGPASS_URL}@$PG_HOST:5432/gta_panel
+FD_CITY_PG_URL=postgresql://${PG_USER}:${PGPASS_URL}@$PG_HOST:5432/china_city_panel
+FD_YEARBOOK_PG_URL=postgresql://${PG_USER}:${PGPASS_URL}@$PG_HOST:5432/yearbook_catalog
 EOF
   chmod 600 "$ENV_FILE"
   echo "已写入 $ENV_FILE (600)"

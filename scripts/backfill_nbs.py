@@ -275,6 +275,37 @@ def _db_error_repr(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _connect(dsn_or_url: str, *, purpose: str = ""):
+    """连 PG，并把 GBK 错误信息转成可读一行。
+
+    为什么需要它：Windows PG 的 `lc_messages` 是中文，认证失败时服务端返回 **GBK 字节**，
+    psycopg2 按 UTF-8 解码就抛 `UnicodeDecodeError: 0xd6`。于是真实原因（口令错）
+    被一条编码异常完全盖住 —— 2026-11-20 实测该容器因此崩溃循环 3336 次，
+    每次日志都只有那个 0xd6，看起来像编码 bug。
+
+    这里把它接住并重新抛出成 SystemExit + 可读消息：worker 会退出（这是对的，
+    连不上就不该假装在干活），但退出原因写的是「连不上 PG」而不是「解码失败」。
+    """
+    import psycopg2
+
+    try:
+        return psycopg2.connect(dsn_or_url)
+    except UnicodeDecodeError as exc:
+        # 用同样的 DSN 再连一次、把消息以 latin-1 取出后按 GBK 解，尽量还原原文。
+        hint = ""
+        try:
+            psycopg2.connect(dsn_or_url, client_encoding="GBK").close()
+        except Exception as exc2:
+            raw = getattr(exc2, "args", ())
+            hint = f"（按 GBK 解码仍是失败：{raw!r}）" if raw else ""
+        raise SystemExit(
+            f"{purpose}连不上 PG：服务端返回非 UTF-8（GBK）错误消息，"
+            f"多半是口令/权限问题而不是编码问题。原始异常：{_db_error_repr(exc)}{hint}"
+        ) from None
+    except psycopg2.OperationalError as exc:
+        raise SystemExit(f"{purpose}连不上 PG：{_db_error_repr(exc)}") from None
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -301,7 +332,7 @@ def ensure_database(name: str = TARGET_DB) -> bool:
     import psycopg2
     import psycopg2.extensions
 
-    conn = psycopg2.connect(_admin_dsn())
+    conn = _connect(_admin_dsn(), purpose="建库时")
     try:
         conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
         with conn.cursor() as cur:
@@ -655,7 +686,7 @@ def ensure_receipt_key_unique() -> bool:
 
     conn = None
     try:
-        conn = psycopg2.connect(dsn("FD_DQ_PG_URL"))
+        conn = _connect(dsn("FD_DQ_PG_URL"), purpose="连 dq 库时")
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT pg_advisory_xact_lock(hashtext('backfill_run_run_key_uq'))"
@@ -755,7 +786,7 @@ def write_receipt(
         ensure_receipt_key_unique()
     conn = None
     try:
-        conn = psycopg2.connect(dsn("FD_DQ_PG_URL"))
+        conn = _connect(dsn("FD_DQ_PG_URL"), purpose="连 dq 库时")
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -1469,7 +1500,7 @@ def cmd_coordinate(args) -> int:
         }
 
         ensure_database()
-        conn = psycopg2.connect(_ingest_dsn())
+        conn = _connect(_ingest_dsn(), purpose="连 cnstats 时")
         try:
             applied, pg15 = apply_migrations(conn)
             log(f"迁移：{'新应用 ' + ', '.join(applied) if applied else '无变化（已是最新）'}"
@@ -1639,7 +1670,7 @@ def cmd_worker(args) -> int:
     """Claim and process shards without executing any DDL."""
     import psycopg2
 
-    conn = psycopg2.connect(args.shard_url or _ingest_dsn())
+    conn = _connect(args.shard_url or _ingest_dsn(), purpose="worker 启动时")
     client = None
     try:
         try:
@@ -1694,7 +1725,7 @@ def cmd_init(args) -> int:
     import psycopg2
 
     ensure_database()
-    conn = psycopg2.connect(_ingest_dsn())
+    conn = _connect(_ingest_dsn(), purpose="连 cnstats 时")
     try:
         applied, pg15 = apply_migrations(conn)
         log(f"迁移：{'新应用 ' + ', '.join(applied) if applied else '无变化（已是最新）'}"
@@ -1742,7 +1773,7 @@ def cmd_self_test(args) -> int:
     per_dbcode: dict[str, dict] = {}
     scope = {"mode": "selftest", "dbcode": None, "fixtures": list(SELF_TEST_FIXTURES)}
 
-    conn = psycopg2.connect(_ingest_dsn())
+    conn = _connect(_ingest_dsn(), purpose="连 cnstats 时")
     try:
         wait_for_schema(conn, timeout=args.schema_timeout)
         begin_run(conn, run_id, scope, "离线自测（内置录制响应，未联网）")
@@ -1853,7 +1884,7 @@ def cmd_backfill(args) -> int:
     try:
         if not args.dry_run:
             ensure_database()
-            conn = psycopg2.connect(_ingest_dsn())
+            conn = _connect(_ingest_dsn(), purpose="连 cnstats 时")
             wait_for_schema(conn, timeout=args.schema_timeout)
             if not (state.get("dbcodes") or {}):
                 seed_state_from_runs(conn, state)
