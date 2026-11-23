@@ -17,7 +17,7 @@ IMAGE=fd-data-quality:local
 # 7fd79b7），那让 `PG_HOST=<db-host>` 变成一次重定向尝试 —— 脚本在 parse 阶段就
 # 语法错，根本无法执行（`bash -n` 报 `syntax error near unexpected token newline`）。
 # 这是一个被脱敏改坏的活脚本，比「暴露一个内网 IP」严重得多。
-PG_HOST="${FD_PG_HOST:-100.64.0.5}"
+PG_HOST="${FD_PG_HOST:?需设 FD_PG_HOST}"
 PGPASS_URL="${1:-}"
 # PG 用户可配置：windows-admin 的 postgres 口令已不可考（2026-11-20），
 # 而已知可用的是只读账号。回填需要写权限，所以必须显式指定有写权限的用户，
